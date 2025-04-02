@@ -42,7 +42,7 @@ def get_reaction_products(chemical_input):
 
 @app.route('/reaction', methods=['POST'])
 def reaction():
-    chemical_input = request.get_json()
+    chemical_input = request.json
     if not chemical_input:
         return jsonify({"error": "no input"}),400
     try:
