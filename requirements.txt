@@ -1,4 +1,4 @@
 flask
 selenium
-urllib.parse
+urllib
 time
