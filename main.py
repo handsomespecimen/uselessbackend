@@ -40,13 +40,9 @@ def get_reaction_products(chemical_input):
     finally:
         driver.quit()
 
-@app.route('/reaction', methods=['GET', 'POST'])
+@app.route('/reaction', methods=['POST'])
 def reaction():
-    if request.method == 'POST':
-        data = request.get_json()
-        chemical_input = data.get('input')
-    else:
-        chemical_input = request.args.get('input')
+    chemical_input = request.get_json()
     if not chemical_input:
         return jsonify({"error": "no input"}),400
     try:
