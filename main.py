@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.common.by import By
+from selenium.common.exceptions import WebDriverException
 import urllib.parse
 import time
 import re
@@ -9,48 +10,54 @@ import re
 app = Flask(__name__)
 
 def clean(text):
-    text = text.replace('`', '')
-    text = text.translate(str.maketrans('⁰¹²³⁴⁵⁶⁷⁸⁹', '0123456789'))
-    text = text.translate(str.maketrans('₀₁₂₃₄₅₆₇₈₉', '0123456789'))
+    if not text:
+        return ""
+    text = text.replace('`', '').replace('"', '')
+    text = text.translate(str.maketrans('⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉', '01234567890123456789'))
     return text
 
-def get_reaction_products(chemical_input):
-    prompt = '[OUTPUT ONLY JSON WITH REACTION PRODUCTS FROM ONLY THE INPUT COMPOUNDS (WHICH ARE SINGULAR MOLECULES) IN THE GIVEN QUANTITIES WITH FORMAT {"products":["compound",...]}. ATOMS IN BOTH INPUT AND OUTPUT MUST BE THE SAME, DO NOT ADD OR REMOVE ANY, ADHERE WITH LAW OF CONSERVATION OF MASS. INCLUDE WASTE IF PRESENT. IF NO REACTION, RETURN INPUT. IF MULTIPLE OF THE SAME COMPOUND ARE PRODUCED THEN LIST THEM ONE BY ONE] {input:{'+f"{chemical_input}"+'}}'
-    
+def get(compounds):
+    if not compounds or not isinstance(compounds, list):
+        return {"error": "invalid format"}
+    input = ",".join(compounds)
+    prompt = f'[OUTPUT ONLY JSON WITH REACTION PRODUCTS FROM ONLY THE INPUT COMPOUNDS (WHICH ARE SINGULAR MOLECULES) IN THE GIVEN QUANTITIES WITH FORMAT {"products":["compound",...]}. ATOMS IN BOTH INPUT AND OUTPUT MUST BE THE SAME, DO NOT ADD OR REMOVE ANY, ADHERE WITH LAW OF CONSERVATION OF MASS. INCLUDE WASTE IF PRESENT. IF NO REACTION, RETURN INPUT. IF MULTIPLE OF THE SAME COMPOUND ARE PRODUCED THEN LIST THEM ONE BY ONE] {{input:{input}}}'
     options = Options()
     options.headless = True
-    driver = webdriver.Firefox(options=options)
-    start_time = time.time()
     try:
-        driver.get(f"https://isou.chat/search?q={urllib.parse.quote(prompt)}")
-        time.sleep(1)
-        driver.refresh()
-        while True:
-            if time.time()-start_time > 60:
-                return {"error": "timed out"}
-            labels = driver.find_elements(By.XPATH, "/html/body/div/div/div[3]/div[2]/div/div[1]/div[2]/div[1]/div[2]/div[2]/div/p")
-            if labels:
-                first_label = labels[0]
+        driver = webdriver.Firefox(options=options)
+        starttime = time.time()
+        try:
+            driver.get(f"https://isou.chat/search?q={urllib.parse.quote(prompt)}")
+            time.sleep(1)
+            while True:
+                if time.time() - starttime > 60:
+                    return {"error": "timed out"}
+                try:
+                    elements = driver.find_elements(By.CSS_SELECTOR, "div.message-content p")
+                    if elements:
+                        response = elements[-1].text
+                        if response and not response.endswith("..."):
+                            jsonmatch = re.search(r'\{.*\}', response)
+                            if jsonmatch:
+                                return {"products": jsonmatch.group()}
+                            return {"products": [clean(response)]}
+                except WebDriverException as e:
+                    return {"error": f"server error: {str(e)}"}
                 time.sleep(.5)
-                if len(driver.find_elements(By.XPATH, "/html/body/div/div/div[3]/div[2]/div/div[1]/div[2]/div[1]/div[2]/div[2]/div/p")) > 1:
-                    return clean(first_label.text)
-                if first_label.text and not first_label.text.endswith("..."):
-                    return clean(first_label.text)
-            time.sleep(.5)
-    finally:
-        driver.quit()
+        finally:
+            driver.quit()
+    except Exception as e:
+        return {"error": f"server error: {str(e)}"}
 
 @app.route('/reaction', methods=['POST'])
 def reaction():
-    data = request.json
-    chemical_input = data.get("input")
-    if not chemical_input:
-        return jsonify({"error": "no input"}),400
     try:
-        result = get_reaction_products(chemical_input)
+        data = request.get_json()
+        if not data or 'input' not in data:
+            return jsonify({"error": "invalid input"}), 400
+        result = get(data['compounds'])
         return jsonify(result)
     except Exception as e:
-        return jsonify({"error": str(e)}),500
-
+        return jsonify({"error": f"server error: {str(e)}"}), 500
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=5000, debug=True)
